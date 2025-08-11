@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, Bar, ReferenceLine } from 'recharts';
 
 // --- Firebase Configuration ---
-// This now correctly reads from the environment variable you set in Netlify.
-const firebaseConfig = process.env.REACT_APP_FIREBASE_CONFIG
-    ? JSON.parse(process.env.REACT_APP_FIREBASE_CONFIG)
+// This will be populated by the environment.
+const firebaseConfig = typeof __firebase_config !== 'undefined'
+    ? JSON.parse(__firebase_config)
     : {};
 
 // --- App Initialization ---
@@ -17,7 +17,7 @@ if (firebaseConfig.apiKey) {
     auth = getAuth(app);
     db = getFirestore(app);
 } else {
-    console.error("Firebase config is not available. Make sure REACT_APP_FIREBASE_CONFIG is set in your environment variables.");
+    console.error("Firebase config is not available.");
 }
 
 // --- Goal Constants ---
@@ -393,23 +393,39 @@ export default function App() {
             return;
         };
 
+        const performAuth = async () => {
+            try {
+                const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (token) {
+                    await signInWithCustomToken(auth, token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Authentication failed:", error);
+            }
+        };
+
         const unsubscribeAuth = onAuthStateChanged(auth, user => {
             if (user) {
                 setUserId(user.uid);
             } else {
-                signInAnonymously(auth).catch(error => {
-                    console.error("Anonymous sign-in failed:", error);
-                });
+                performAuth();
             }
         });
         
+        if (!auth.currentUser) {
+            performAuth();
+        }
+
         return () => unsubscribeAuth();
     }, []);
 
     useEffect(() => {
         if (!userId || !db) return;
 
-        const weeklyDataCollection = collection(db, `users/${userId}/weeklyData`);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const weeklyDataCollection = collection(db, `artifacts/${appId}/users/${userId}/weeklyData`);
         
         const unsubscribeFirestore = onSnapshot(weeklyDataCollection, (snapshot) => {
             if (snapshot.empty) {
@@ -445,7 +461,8 @@ export default function App() {
         }
         
         try {
-            const weeklyDataCollection = collection(db, `users/${userId}/weeklyData`);
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            const weeklyDataCollection = collection(db, `artifacts/${appId}/users/${userId}/weeklyData`);
             const docRef = doc(weeklyDataCollection, newWeek.weekStartDate);
             await setDoc(docRef, { ...newWeek, createdAt: serverTimestamp() });
             console.log("Document written with ID: ", newWeek.weekStartDate);
